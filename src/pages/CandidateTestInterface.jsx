@@ -49,6 +49,7 @@ export default function CandidateTestInterface() {
   const [answers, setAnswers] = useState({});
   const [executing, setExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState(null);
+  const [resultTab, setResultTab] = useState('output'); // 'output' | 'testcases'
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -744,6 +745,7 @@ export default function CandidateTestInterface() {
     
     setExecuting(true);
     setExecutionResult(null); // Clear any previous results
+    setResultTab('output');   // Reset to output tab
     
     try {
       const response = await api.post(`/sessions/${sessionToken}/submit`, {
@@ -769,6 +771,7 @@ export default function CandidateTestInterface() {
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
       setExecutionResult(null);
+      setResultTab('output');
     }
   };
 
@@ -1213,7 +1216,7 @@ export default function CandidateTestInterface() {
                 {questions.map((q, index) => (
                   <button
                     key={q.id}
-                    onClick={() => { setCurrentQuestionIndex(index); setExecutionResult(null); }}
+                    onClick={() => { setCurrentQuestionIndex(index); setExecutionResult(null); setResultTab('output'); }}
                     className={`p-2 rounded text-sm font-medium text-center ${
                       index === currentQuestionIndex
                         ? 'bg-primary-600 text-white'
@@ -1447,41 +1450,118 @@ export default function CandidateTestInterface() {
                   />
                 </div>
 
-                {executionResult && (
-                  <div className="mt-4">
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Execution Result:</h4>
-                    <div className={`p-4 rounded-lg ${
-                      executionResult.status === 'error' || executionResult.execution_error 
-                        ? 'bg-red-50 border border-red-200' 
-                        : 'bg-blue-50 border border-blue-200'
-                    }`}>
-                      {executionResult.execution_error ? (
-                        <div className="text-red-800 font-mono text-sm whitespace-pre-wrap">
-                          <strong>Error:</strong><br/>
-                          {executionResult.execution_error}
-                        </div>
-                      ) : executionResult.execution_output ? (
-                        <div>
-                          <div className="text-gray-900 font-mono text-sm whitespace-pre-wrap" style={{maxHeight: '400px', overflowY: 'auto'}}>
-                            {executionResult.execution_output}
-                          </div>
-                          {executionResult.execution_time_ms !== undefined && (
-                            <div className="text-xs text-gray-500 mt-2">
-                              Execution time: {executionResult.execution_time_ms}ms
-                            </div>
+                {executionResult && (() => {
+                  const testResults = executionResult.grading_details?.test_results || [];
+                  const hasTests = testResults.length > 0;
+                  const passed = executionResult.test_cases_passed ?? 0;
+                  const total  = executionResult.test_cases_total  ?? 0;
+                  const hasError = !!(executionResult.execution_error);
+
+                  return (
+                    <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+                      {/* ── Tab Bar ── */}
+                      <div className="flex border-b border-gray-200 bg-gray-50">
+                        <button
+                          onClick={() => setResultTab('output')}
+                          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                            resultTab === 'output'
+                              ? 'border-blue-600 text-blue-700 bg-white'
+                              : 'border-transparent text-gray-500 hover:text-gray-700'
+                          }`}
+                        >
+                          Output
+                        </button>
+                        {hasTests && (
+                          <button
+                            onClick={() => setResultTab('testcases')}
+                            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+                              resultTab === 'testcases'
+                                ? 'border-blue-600 text-blue-700 bg-white'
+                                : 'border-transparent text-gray-500 hover:text-gray-700'
+                            }`}
+                          >
+                            Test Cases
+                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                              hasError ? 'bg-red-100 text-red-700'
+                                : passed === total ? 'bg-green-100 text-green-700'
+                                : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {passed}/{total}
+                            </span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* ── Output Tab ── */}
+                      {resultTab === 'output' && (
+                        <div className="p-4 bg-gray-900">
+                          {hasError ? (
+                            <pre className="text-red-400 font-mono text-sm whitespace-pre-wrap">{executionResult.execution_error}</pre>
+                          ) : executionResult.execution_output ? (
+                            <>
+                              <pre className="text-green-300 font-mono text-sm whitespace-pre-wrap" style={{maxHeight: '300px', overflowY: 'auto'}}>{executionResult.execution_output}</pre>
+                              {executionResult.execution_time_ms !== undefined && (
+                                <div className="text-xs text-gray-500 mt-2">Runtime: {executionResult.execution_time_ms}ms</div>
+                              )}
+                            </>
+                          ) : (
+                            <pre className="text-gray-400 font-mono text-sm">No output.</pre>
                           )}
                         </div>
-                      ) : (
-                        <div className="text-gray-600 text-sm">
-                          Code executed successfully. No output returned.
+                      )}
+
+                      {/* ── Test Cases Tab ── */}
+                      {resultTab === 'testcases' && hasTests && (
+                        <div className="divide-y divide-gray-100">
+                          {testResults.map((tc, i) => (
+                            <details key={i} className="group">
+                              <summary className={`flex items-center gap-3 px-4 py-3 cursor-pointer select-none ${
+                                tc.passed ? 'hover:bg-green-50' : 'hover:bg-red-50'
+                              }`}>
+                                <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                                  tc.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {tc.passed ? '✓' : '✗'}
+                                </span>
+                                <span className="text-sm font-medium text-gray-700">Case {tc.test_case}</span>
+                                <span className={`ml-auto text-xs font-medium ${
+                                  tc.passed ? 'text-green-600' : 'text-red-600'
+                                }`}>
+                                  {tc.passed ? 'Accepted' : 'Wrong Answer'}
+                                </span>
+                              </summary>
+
+                              <div className="px-4 pb-4 pt-1 bg-gray-50 grid grid-cols-1 gap-2 text-xs font-mono">
+                                {tc.input !== undefined && (
+                                  <div>
+                                    <p className="text-gray-500 mb-0.5 font-sans">Input</p>
+                                    <pre className="bg-gray-800 text-gray-200 rounded p-2 overflow-x-auto">{String(tc.input)}</pre>
+                                  </div>
+                                )}
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <p className="text-gray-500 mb-0.5 font-sans">Expected Output</p>
+                                    <pre className="bg-gray-800 text-green-300 rounded p-2 overflow-x-auto">{String(tc.expected ?? '')}</pre>
+                                  </div>
+                                  <div>
+                                    <p className="text-gray-500 mb-0.5 font-sans">Your Output</p>
+                                    <pre className={`rounded p-2 overflow-x-auto ${
+                                      tc.passed ? 'bg-gray-800 text-green-300' : 'bg-gray-800 text-red-300'
+                                    }`}>{String(tc.actual ?? tc.error ?? '')}</pre>
+                                  </div>
+                                </div>
+                              </div>
+                            </details>
+                          ))}
                         </div>
                       )}
+
+                      <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 italic">
+                        ℹ️ Answer saved. Final score calculated on submission.
+                      </div>
                     </div>
-                    <div className="mt-2 text-xs text-gray-500 italic">
-                      ℹ️ Your answer has been saved. Results will be evaluated after test submission.
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
               </div>
             )}
 
@@ -1527,7 +1607,7 @@ export default function CandidateTestInterface() {
             {/* Navigation Buttons */}
             <div className="flex items-center justify-between">
               <button
-                onClick={() => { setCurrentQuestionIndex(Math.max(0, currentQuestionIndex - 1)); setExecutionResult(null); }}
+                onClick={() => { setCurrentQuestionIndex(Math.max(0, currentQuestionIndex - 1)); setExecutionResult(null); setResultTab('output'); }}
                 disabled={currentQuestionIndex === 0}
                 className="btn btn-secondary"
               >
