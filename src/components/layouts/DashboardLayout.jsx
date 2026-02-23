@@ -1,12 +1,21 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
+import api from '../../services/api'
 
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [evalPending, setEvalPending] = useState(0)
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return
+    api.get('/sessions/admin/evaluation-counts')
+      .then(res => setEvalPending(res.data?.pending || 0))
+      .catch(() => {})
+  }, [user?.role])
 
   const handleLogout = async () => {
     await logout()
@@ -20,6 +29,7 @@ export default function DashboardLayout({ children }) {
       { name: 'Tests', href: '/dashboard/tests', icon: 'document-text' },
       { name: 'Questions', href: '/dashboard/questions', icon: 'question-mark' },
       { name: 'Candidates', href: '/dashboard/candidates', icon: 'users' },
+      { name: 'Designations', href: '/dashboard/settings/designations', icon: 'tag' },
       { name: 'Interviewers', href: '/dashboard/interviewers', icon: 'user-group' },
       { name: 'Evaluations', href: '/dashboard/evaluations', icon: 'clipboard-check' },
       { name: 'Analytics', href: '/dashboard/analytics', icon: 'chart-bar' },
@@ -77,6 +87,9 @@ export default function DashboardLayout({ children }) {
       'question-mark': (
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       ),
+      tag: (
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+      ),
     }
     return icons[iconName] || icons.home
   }
@@ -122,6 +135,11 @@ export default function DashboardLayout({ children }) {
                     {getIcon(item.icon)}
                   </svg>
                   {item.name}
+                  {item.name === 'Evaluations' && evalPending > 0 && (
+                    <span className="ml-auto text-xs bg-yellow-500 text-white font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                      {evalPending > 99 ? '99+' : evalPending}
+                    </span>
+                  )}
                 </Link>
               )
             })}

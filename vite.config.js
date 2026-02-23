@@ -19,6 +19,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        autoRewrite: true,
       },
       '/socket.io': {
         target: 'http://localhost:8000',

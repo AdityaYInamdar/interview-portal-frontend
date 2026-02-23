@@ -1,6 +1,8 @@
 import axios from 'axios'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// Empty string = relative URL → goes through Vite proxy (/api → http://localhost:8000)
+// Set VITE_API_URL in .env for production deployments pointing to a real domain
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 // Create axios instance
 const api = axios.create({
@@ -11,132 +13,142 @@ const api = axios.create({
   timeout: 30000,
 })
 
-// Request interceptor
+// ─── Request interceptor ────────────────────────────────────────────────────
+// Read the token DIRECTLY from localStorage on every request so it's available
+// even in the brief window before Zustand has rehydrated on the first render.
 api.interceptors.request.use(
   (config) => {
-    let token = null
-
-    // 1. Prefer registered-user token from localStorage (Zustand persist)
-    const authStorage = localStorage.getItem('auth-storage')
-    if (authStorage) {
-      try {
-        const { state } = JSON.parse(authStorage)
-        if (state?.token) {
-          token = state.token
-          console.log('🔑 Adding token to request:', {
-            url: config.url,
-            tokenLength: token.length,
-            tokenStart: token.substring(0, 30),
-            headers: config.headers
-          })
-        } else {
-          console.warn('⚠️ No token found in auth storage state')
+    try {
+      const stored = localStorage.getItem('auth-storage')
+      if (stored) {
+        const token = JSON.parse(stored)?.state?.token
+        if (token) {
+          config.headers.Authorization = `Bearer ${token}`
         }
-      } catch (error) {
-        console.error('❌ Error parsing auth storage:', error)
       }
-    } else {
-      console.warn('⚠️ No auth-storage in localStorage')
-    }
+    } catch (_) {}
 
-    // 2. Fall back to guest token (anonymous candidate joining via email link)
-    if (!token) {
+    // Guest fallback — candidate joining via email link
+    if (!config.headers.Authorization) {
       const guestToken = sessionStorage.getItem('guest-token')
       if (guestToken) {
-        token = guestToken
-        console.log('🎫 Using guest token for request:', config.url)
+        config.headers.Authorization = `Bearer ${guestToken}`
       }
-    }
-
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
     }
 
     return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
-// Response interceptor
+// ─── Response interceptor ───────────────────────────────────────────────────
+// Uses a refresh-queue pattern so that when multiple requests fire at once
+// and all get 401, only ONE refresh call is made and the rest wait for it.
+
+let _isRefreshing = false
+let _refreshQueue = []
+
+function processQueue(error, token = null) {
+  _refreshQueue.forEach(({ resolve, reject }) => {
+    if (error) reject(error)
+    else resolve(token)
+  })
+  _refreshQueue = []
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config
 
-    // Handle 401 errors (unauthorized)
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Only intercept 401 — 403 is a real permission error, let it bubble
+    if (error.response?.status !== 401) {
+      return Promise.reject(error)
+    }
+
+    // Already retried once — don't loop
+    if (originalRequest._retry) {
+      return Promise.reject(error)
+    }
+
+    // ── Case 1: Request fired WITHOUT a token (page-load race condition) ──
+    // Don't refresh — just re-attach the current token and retry once.
+    if (!originalRequest.headers?.Authorization) {
       originalRequest._retry = true
-
       try {
-        // Try to refresh token
-        const authStorage = localStorage.getItem('auth-storage')
-        if (authStorage) {
-          const { state } = JSON.parse(authStorage)
-          if (state?.refreshToken) {
-            const response = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
-              refresh_token: state.refreshToken,
-            })
-
-            const { access_token } = response.data
-
-            // Update token in storage
-            state.token = access_token
-            localStorage.setItem(
-              'auth-storage',
-              JSON.stringify({ state, version: 0 })
-            )
-
-            // Retry original request with new token
-            originalRequest.headers.Authorization = `Bearer ${access_token}`
-            return api(originalRequest)
-          }
+        const stored = localStorage.getItem('auth-storage')
+        const token = stored ? JSON.parse(stored)?.state?.token : null
+        if (token) {
+          originalRequest.headers.Authorization = `Bearer ${token}`
+          return api(originalRequest)
         }
-        
-        // No refresh token available, logout
-        console.warn('No refresh token available, logging out...')
-        handleAuthError()
-      } catch (refreshError) {
-        // Refresh failed, clear auth and redirect to login
-        console.error('Token refresh failed, logging out...', refreshError)
-        handleAuthError()
-        return Promise.reject(refreshError)
-      }
+      } catch (_) {}
+      // Genuinely no token → redirect to login (don't wipe storage)
+      redirectToLogin()
+      return Promise.reject(error)
     }
 
-    // Handle 403 (forbidden) - also means token is invalid or expired
-    if (error.response?.status === 403) {
-      console.warn('Forbidden access, checking authentication...')
-      const authStorage = localStorage.getItem('auth-storage')
-      if (!authStorage || !JSON.parse(authStorage)?.state?.token) {
-        handleAuthError()
-      }
+    // ── Case 2: Token WAS sent but got 401 → it's expired → refresh ──
+    originalRequest._retry = true
+
+    if (_isRefreshing) {
+      // Another refresh is already in flight — queue this request
+      return new Promise((resolve, reject) => {
+        _refreshQueue.push({ resolve, reject })
+      })
+        .then((token) => {
+          originalRequest.headers.Authorization = `Bearer ${token}`
+          return api(originalRequest)
+        })
+        .catch((err) => Promise.reject(err))
     }
 
-    return Promise.reject(error)
+    _isRefreshing = true
+
+    try {
+      const stored = localStorage.getItem('auth-storage')
+      const state = stored ? JSON.parse(stored)?.state : null
+
+      if (!state?.refreshToken) {
+        processQueue(new Error('No refresh token'), null)
+        redirectToLogin()
+        return Promise.reject(error)
+      }
+
+      const resp = await axios.post(`${API_URL}/api/v1/auth/refresh`, {
+        refresh_token: state.refreshToken,
+      })
+      const { access_token } = resp.data
+
+      // Persist new access token (leave everything else intact)
+      state.token = access_token
+      localStorage.setItem('auth-storage', JSON.stringify({ state, version: 0 }))
+      api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
+
+      processQueue(null, access_token)
+      originalRequest.headers.Authorization = `Bearer ${access_token}`
+      return api(originalRequest)
+    } catch (refreshError) {
+      processQueue(refreshError, null)
+      // Refresh failed → redirect to login but do NOT wipe localStorage so the
+      // user can log back in without losing persisted app state.
+      redirectToLogin()
+      return Promise.reject(refreshError)
+    } finally {
+      _isRefreshing = false
+    }
   }
 )
 
-// Helper function to handle authentication errors
-function handleAuthError() {
-  // If this is a guest session on an interview page, don't redirect to login
-  if (window.location.pathname.startsWith('/interview/') && sessionStorage.getItem('guest-token')) {
-    console.warn('Guest session expired or invalid — staying on interview page')
+// ─── Helper ─────────────────────────────────────────────────────────────────
+function redirectToLogin() {
+  // Guest sessions on interview pages should stay on their page
+  if (
+    window.location.pathname.startsWith('/interview/') &&
+    sessionStorage.getItem('guest-token')
+  ) {
     return
   }
-
-  // Clear all auth data
-  localStorage.removeItem('auth-storage')
-  sessionStorage.clear()
-  
-  // Clear any tokens from axios defaults
-  delete api.defaults.headers.common['Authorization']
-  
-  // Show a message
-  console.warn('Session expired. Please log in again.')
-  
-  // Redirect to login (only if not already there)
   if (window.location.pathname !== '/login') {
     window.location.href = '/login?session_expired=true'
   }

@@ -70,6 +70,14 @@ export default function CandidateTestInterface() {
   const sessionTokenRef = useRef(null);
   // Prevent double-submission (timer expiry racing with manual submit)
   const isSubmittingRef = useRef(false);
+  // Set to true after successful submit so tab-switch guards stop firing
+  const isTestSubmittedRef = useRef(false);
+
+  // ── Activity capture refs ────────────────────────────────────────────────────
+  const activityBufferRef         = useRef({});  // { [questionId]: [{ts,sl,sc,el,ec,v,p,init?}] }
+  const questionVisitStartRef     = useRef({});  // { [questionId]: timestamp of current visit start }
+  const questionAccumulatedTimeRef= useRef({});  // { [questionId]: ms accumulated across all visits }
+  const currentQuestionIdRef      = useRef(null);
 
   // ── Recording / proctoring refs ─────────────────────────────────────────────
   const screenRecorderRef = useRef(null);   // MediaRecorder on screen stream
@@ -186,7 +194,7 @@ export default function CandidateTestInterface() {
 
     // Detect tab switching / window blur
     const handleVisibilityChange = () => {
-      if (document.hidden && !violationGraceRef.current) {
+      if (document.hidden && !violationGraceRef.current && !isTestSubmittedRef.current) {
         logViolation('tab_switch', 'Candidate switched tabs or minimized window');
         setShowViolationWarning(true);
         setTimeout(() => setShowViolationWarning(false), 5000);
@@ -195,7 +203,7 @@ export default function CandidateTestInterface() {
 
     // Detect window blur (switching to another window)
     const handleWindowBlur = () => {
-      if (!violationGraceRef.current) {
+      if (!violationGraceRef.current && !isTestSubmittedRef.current) {
         logViolation('window_blur', 'Candidate switched to another window');
         setShowViolationWarning(true);
         setTimeout(() => setShowViolationWarning(false), 5000);
@@ -246,7 +254,88 @@ export default function CandidateTestInterface() {
     return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [testStarted]);
 
-  // ── Violation clip helpers ──────────────────────────────────────────────────
+  // ── Activity capture ────────────────────────────────────────────────────────
+  //
+  // Captures every Monaco change event (insert/delete/paste) in memory.
+  // NO API calls during the test — everything is sent in one bulk payload at submit.
+  // Idle time (candidate reading, not typing) creates natural gaps between event
+  // timestamps, which the playback slider represents as flat (code unchanged) sections.
+
+  const setupActivityCapture = (editor, _monaco, questionId, language) => {
+    if (!questionId) return;
+
+    // Initialise buffer for this question
+    if (!activityBufferRef.current[questionId]) {
+      activityBufferRef.current[questionId] = [];
+    }
+
+    // Record start time for this visit
+    questionVisitStartRef.current[questionId] = Date.now();
+    currentQuestionIdRef.current = questionId;
+
+    // Store the initial editor content as the baseline for this question.
+    // This is the code template (or previously saved answer on revisit).
+    const initialCode = editor.getValue();
+    if (activityBufferRef.current[questionId].length === 0 && initialCode != null) {
+      activityBufferRef.current[questionId].push({
+        ts: Date.now(),
+        sl: -1, sc: -1, el: -1, ec: -1,
+        v: initialCode, p: 0, init: 1, lang: language,
+      });
+    }
+
+    // Attach model change listener.
+    // Uses CLOSURE variables (questionId, language) — NOT refs — so events
+    // are always routed to this exact question regardless of what ref says.
+    // This is safe because Monaco remounts (key={question.id}) on every question
+    // switch, so each listener is mounted for exactly one question.
+    const model = editor.getModel();
+    if (!model) return;
+
+    const disposable = model.onDidChangeContent((e) => {
+      const ts = Date.now();
+      if (!activityBufferRef.current[questionId]) activityBufferRef.current[questionId] = [];
+
+      for (const change of e.changes) {
+        // Paste = long text  OR  multi-line text that isn't just Enter (bare \n / \r\n)
+        const hasRealContent = change.text.replace(/[\r\n]/g, '').length > 0;
+        const isPaste = change.text.length > 10 || (change.text.includes('\n') && hasRealContent);
+        activityBufferRef.current[questionId].push({
+          ts,
+          sl: change.range.startLineNumber - 1,
+          sc: change.range.startColumn - 1,
+          el: change.range.endLineNumber - 1,
+          ec: change.range.endColumn - 1,
+          v: change.text,
+          p: isPaste ? 1 : 0,
+          lang: language,
+        });
+      }
+    });
+
+    return () => disposable.dispose();
+  };
+
+  // Track per-question accumulated time only (init events now come from onMount)
+  useEffect(() => {
+    if (!testStarted || !questions.length) return;
+    const qId = questions[currentQuestionIndex]?.id;
+    if (!qId) return;
+    const prevQId = currentQuestionIdRef.current;
+
+    // Accumulate time for the question we're leaving
+    if (prevQId && prevQId !== qId) {
+      const visitStart = questionVisitStartRef.current[prevQId] || Date.now();
+      const prev = questionAccumulatedTimeRef.current[prevQId] || 0;
+      questionAccumulatedTimeRef.current[prevQId] = prev + (Date.now() - visitStart);
+    }
+
+    currentQuestionIdRef.current = qId;
+    questionVisitStartRef.current[qId] = Date.now();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentQuestionIndex, testStarted]);
+
+
   const captureViolationClip = (type, desc) => {
     if (captureStateRef.current.status !== 'idle') return;
     if (!screenRecorderRef.current || screenRecorderRef.current.state !== 'recording') return;
@@ -693,28 +782,42 @@ export default function CandidateTestInterface() {
     setIsSubmitting(true);
     stopRecording();
     try {
-      // Batch-submit every question's latest answer before completing
-      await Promise.all(
-        questions.map(q => {
+      // Finalise accumulated time for the current question before submit
+      const curQId = currentQuestionIdRef.current;
+      if (curQId) {
+        const visitStart = questionVisitStartRef.current[curQId] || Date.now();
+        const prev = questionAccumulatedTimeRef.current[curQId] || 0;
+        questionAccumulatedTimeRef.current[curQId] = prev + (Date.now() - visitStart);
+      }
+
+      // Single API call: submit all answers + activity log + time tracking atomically.
+      await api.post(`/sessions/${sessionToken}/complete-with-answers`, {
+        answers: questions.map(q => {
           const ans = answers[q.id] || {};
-          return api.post(`/sessions/${sessionToken}/submit`, {
+          return {
             question_id: q.id,
             code_answer: ans.code_answer || null,
             mcq_selected_options: ans.mcq_selected_options?.length ? ans.mcq_selected_options : null,
             text_answer: ans.text_answer || null,
-          }).catch(() => {});
-        })
-      );
-      await api.post(`/sessions/${sessionToken}/complete`);
+          };
+        }),
+        // Compact char-level activity log — one bulk insert, no polling
+        activity_log: activityBufferRef.current,
+        // Wall-clock time per question in ms
+        time_tracking: questionAccumulatedTimeRef.current,
+      });
       // Reset the guard BEFORE navigating — navigate() unmounts the component
       // so the finally block would never run, leaving the ref permanently true.
       isSubmittingRef.current = false;
       setIsSubmitting(false);
+      // Stop all tab/window violation tracking — test is done
+      isTestSubmittedRef.current = true;
       navigate('/test/complete');
     } catch (error) {
       isSubmittingRef.current = false;
       setIsSubmitting(false);
       if (error.response?.status === 400) {
+        isTestSubmittedRef.current = true;
         navigate('/test/complete');
         return;
       }
@@ -1327,10 +1430,12 @@ export default function CandidateTestInterface() {
                 
                 <div className="border rounded-lg overflow-hidden">
                   <Editor
+                    key={currentQuestion.id}
                     height="400px"
                     language={getLanguageMode(currentQuestion.question_type)}
                     value={currentAnswer.code_answer}
                     onChange={(value) => handleAnswerChange(currentQuestion.id, 'code_answer', value)}
+                    onMount={(editor, monaco) => setupActivityCapture(editor, monaco, currentQuestion.id, getLanguageMode(currentQuestion.question_type))}
                     theme="vs-dark"
                     options={{
                       minimap: { enabled: false },

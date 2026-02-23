@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { toast } from 'react-hot-toast';
@@ -12,6 +12,11 @@ const CreateInterviewer = () => {
   const [expertise, setExpertise] = useState([]);
   const [skillInput, setSkillInput] = useState('');
   const [expertiseInput, setExpertiseInput] = useState('');
+  const [designations, setDesignations] = useState([]);
+
+  useEffect(() => {
+    api.get('/designations/').then((r) => setDesignations(r.data || [])).catch(() => {});
+  }, []);
 
   const {
     register,
@@ -176,12 +181,35 @@ const CreateInterviewer = () => {
                 <label className="block text-sm font-medium text-gray-700">
                   Job Title
                 </label>
-                <input
-                  type="text"
-                  {...register('title')}
-                  placeholder="e.g., Senior Software Engineer"
-                  className="input mt-1"
-                />
+                {designations.length > 0 ? (
+                  <select {...register('title')} className="input mt-1">
+                    <option value="">— Select a designation —</option>
+                    {(() => {
+                      const grouped = designations.reduce((acc, d) => {
+                        const dept = d.department || 'General';
+                        if (!acc[dept]) acc[dept] = [];
+                        acc[dept].push(d);
+                        return acc;
+                      }, {});
+                      return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([dept, items]) => (
+                        <optgroup key={dept} label={dept}>
+                          {items.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.title}{d.level ? ` (${d.level})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ));
+                    })()}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    {...register('title')}
+                    placeholder="e.g., Senior Software Engineer"
+                    className="input mt-1"
+                  />
+                )}
               </div>
 
               <div>

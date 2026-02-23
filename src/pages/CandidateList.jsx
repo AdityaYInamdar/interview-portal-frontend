@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import DashboardLayout from '../components/layouts/DashboardLayout'
 import api from '../services/api'
@@ -16,12 +16,16 @@ const STATUS_COLORS = {
 }
 
 export default function CandidateList() {
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const searchTerm = searchParams.get('q') || ''
+  const statusFilter = searchParams.get('status') || ''
+  const setSearchTerm = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v ? n.set('q', v) : n.delete('q'); return n })
+  const setStatusFilter = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v ? n.set('status', v) : n.delete('status'); return n })
   const [confirmDialog, setConfirmDialog] = useState(null)
 
   const { data: candidates, isLoading, refetch } = useQuery({
     queryKey: ['candidates', searchTerm, statusFilter],
+    staleTime: 0,
     queryFn: async () => {
       const params = new URLSearchParams()
       if (searchTerm) params.append('search', searchTerm)

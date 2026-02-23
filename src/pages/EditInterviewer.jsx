@@ -14,6 +14,7 @@ const EditInterviewer = () => {
   const [expertise, setExpertise] = useState([]);
   const [skillInput, setSkillInput] = useState('');
   const [expertiseInput, setExpertiseInput] = useState('');
+  const [designations, setDesignations] = useState([]);
 
   const {
     register,
@@ -36,6 +37,7 @@ const EditInterviewer = () => {
 
   useEffect(() => {
     fetchInterviewer();
+    api.get('/designations/').then((r) => setDesignations(r.data || [])).catch(() => {});
   }, [id]);
 
   const fetchInterviewer = async () => {
@@ -196,12 +198,38 @@ const EditInterviewer = () => {
                 <label className="block text-sm font-medium text-gray-700">
                   Job Title
                 </label>
-                <input
-                  type="text"
-                  {...register('title')}
-                  placeholder="e.g., Senior Software Engineer"
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                />
+                {designations.length > 0 ? (
+                  <select
+                    {...register('title')}
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  >
+                    <option value="">— Select a designation —</option>
+                    {(() => {
+                      const grouped = designations.reduce((acc, d) => {
+                        const dept = d.department || 'General';
+                        if (!acc[dept]) acc[dept] = [];
+                        acc[dept].push(d);
+                        return acc;
+                      }, {});
+                      return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([dept, items]) => (
+                        <optgroup key={dept} label={dept}>
+                          {items.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.title}{d.level ? ` (${d.level})` : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ));
+                    })()}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    {...register('title')}
+                    placeholder="e.g., Senior Software Engineer"
+                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                  />
+                )}
               </div>
 
               <div>

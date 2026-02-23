@@ -1,19 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import DashboardLayout from '../components/layouts/DashboardLayout';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 
 export default function QuestionBank() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterType = searchParams.get('type') || 'all';
+  const filterDifficulty = searchParams.get('difficulty') || 'all';
+  const searchQuery = searchParams.get('q') || '';
+  const setFilterType = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v && v !== 'all' ? n.set('type', v) : n.delete('type'); return n });
+  const setFilterDifficulty = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v && v !== 'all' ? n.set('difficulty', v) : n.delete('difficulty'); return n });
+  const setSearchQuery = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v ? n.set('q', v) : n.delete('q'); return n });
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState(null);
-  const [filterType, setFilterType] = useState('all');
-  const [filterDifficulty, setFilterDifficulty] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
   const [confirmDialog, setConfirmDialog] = useState(null);
   
   const [formData, setFormData] = useState({
@@ -39,11 +44,7 @@ export default function QuestionBank() {
     tags: []
   });
 
-  useEffect(() => {
-    fetchQuestions();
-  }, [filterType, filterDifficulty]);
-
-  const fetchQuestions = async () => {
+  const fetchQuestions = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
@@ -58,11 +59,11 @@ export default function QuestionBank() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterType, filterDifficulty, searchQuery]);
 
-  const handleSearch = () => {
+  useEffect(() => {
     fetchQuestions();
-  };
+  }, [fetchQuestions]);
 
   const handleCreateQuestion = async (e) => {
     e.preventDefault();
@@ -324,9 +325,9 @@ export default function QuestionBank() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search questions..."
                   className="input flex-1"
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  onKeyPress={(e) => e.key === 'Enter' && fetchQuestions()}
                 />
-                <button onClick={handleSearch} className="btn btn-secondary">
+                <button onClick={fetchQuestions} className="btn btn-secondary">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>

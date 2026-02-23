@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import DashboardLayout from '../components/layouts/DashboardLayout'
 import api from '../services/api'
@@ -24,9 +24,16 @@ const TYPE_COLORS = {
 }
 
 export default function InterviewList() {
-  const [filters, setFilters] = useState({
-    status: '',
-    interview_type: '',
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = {
+    status: searchParams.get('status') || '',
+    interview_type: searchParams.get('type') || '',
+  }
+  const setFilters = (next) => setSearchParams(prev => {
+    const n = new URLSearchParams(prev)
+    next.status ? n.set('status', next.status) : n.delete('status')
+    next.interview_type ? n.set('type', next.interview_type) : n.delete('type')
+    return n
   })
   const queryClient = useQueryClient()
   const [confirmDialog, setConfirmDialog] = useState(null)
@@ -37,6 +44,7 @@ export default function InterviewList() {
       const params = new URLSearchParams()
       if (filters.status) params.append('status', filters.status)
       if (filters.interview_type) params.append('interview_type', filters.interview_type)
+      params.append('page_size', '200')
       
       const response = await api.get(`/interviews?${params}`)
       return response.data.items || response.data

@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import DashboardLayout from '../components/layouts/DashboardLayout'
 import api from '../services/api'
+import toast from 'react-hot-toast'
 
 const STATUS_COLORS = {
   scheduled: 'bg-blue-100 text-blue-800',
@@ -25,10 +26,134 @@ const CANDIDATE_STATUS_COLORS = {
 
 const TABS = ['overview', 'interviews', 'tests']
 
+// ── Inline submission viewer reused inside the Tests tab ──────────────
+function SubmissionCard({ submission }) {
+  const q = submission.question || {}
+  return (
+    <div className="border rounded-lg p-4 bg-white">
+      {/* Question header */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="font-semibold text-gray-900 text-sm">{q.title || '(Question not found)'}</span>
+            <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-700 rounded capitalize">{submission.question_type}</span>
+            {q.difficulty && (
+              <span className={`text-xs px-2 py-0.5 rounded capitalize ${
+                q.difficulty === 'easy' ? 'bg-green-100 text-green-700'
+                  : q.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-red-100 text-red-700'
+              }`}>{q.difficulty}</span>
+            )}
+          </div>
+          {q.description && <p className="text-xs text-gray-500 whitespace-pre-wrap">{q.description}</p>}
+        </div>
+        <div className="ml-4 text-right shrink-0">
+          <div className="text-base font-bold text-primary-600">
+            {submission.marks_obtained} / {submission.max_marks}
+          </div>
+          {submission.auto_graded && <div className="text-xs text-gray-400">Auto-graded</div>}
+          {submission.manually_graded && <div className="text-xs text-blue-500">Manually graded</div>}
+          <div className={`text-xs mt-0.5 font-medium ${
+            submission.status === 'graded' ? 'text-green-600'
+              : submission.status === 'error' ? 'text-red-600'
+              : submission.status === 'pending' ? 'text-yellow-600'
+              : 'text-gray-500'
+          }`}>{submission.status}</div>
+        </div>
+      </div>
+
+      {/* Candidate answer */}
+      {submission.code_answer && (
+        <details className="mb-2">
+          <summary className="text-xs font-semibold text-gray-600 cursor-pointer select-none">Candidate's Code</summary>
+          <pre className="bg-gray-900 text-gray-100 p-3 rounded text-xs overflow-x-auto mt-1">{submission.code_answer}</pre>
+        </details>
+      )}
+      {submission.text_answer && (
+        <div className="mb-2">
+          <div className="text-xs font-semibold text-gray-600 mb-1">Candidate's Answer:</div>
+          <div className="bg-gray-50 p-2 rounded text-xs text-gray-900 whitespace-pre-wrap">{submission.text_answer}</div>
+        </div>
+      )}
+      {submission.mcq_selected_options?.length > 0 && (
+        <div className="mb-2 text-xs text-gray-700">
+          <span className="font-semibold">Selected: </span>{submission.mcq_selected_options.join(', ')}
+        </div>
+      )}
+
+      {/* MCQ options with correct answers */}
+      {submission.question_type === 'mcq' && q.mcq_options && (
+        <div className="mb-2">
+          <ul className="space-y-1">
+            {q.mcq_options.map(opt => (
+              <li key={opt.id} className={`text-xs px-2 py-1 rounded flex items-center gap-2 ${
+                opt.is_correct ? 'bg-green-50 text-green-800 border border-green-200' : 'text-gray-700'
+              }`}>
+                <span>{opt.text}</span>
+                {opt.is_correct && <span className="text-green-600 font-semibold ml-auto">✓</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Ideal answer for descriptive */}
+      {submission.question_type === 'descriptive' && q.ideal_answer && (
+        <details className="mb-2">
+          <summary className="text-xs font-semibold text-blue-700 cursor-pointer select-none">Ideal Answer / Rubric</summary>
+          <div className="bg-blue-50 border border-blue-100 p-2 rounded text-xs text-blue-900 whitespace-pre-wrap mt-1">{q.ideal_answer}</div>
+        </details>
+      )}
+
+      {/* Execution output */}
+      {submission.execution_output && (
+        <details className="mb-2">
+          <summary className="text-xs font-semibold text-gray-600 cursor-pointer select-none">Execution Output</summary>
+          <pre className="bg-green-50 border border-green-200 text-green-900 p-2 rounded text-xs overflow-x-auto mt-1">{submission.execution_output}</pre>
+        </details>
+      )}
+      {submission.execution_error && (
+        <div className="mb-2">
+          <div className="text-xs font-semibold text-red-600 mb-0.5">Execution Error</div>
+          <pre className="bg-red-50 border border-red-200 text-red-900 p-2 rounded text-xs overflow-x-auto">{submission.execution_error}</pre>
+        </div>
+      )}
+
+      {/* Test cases */}
+      {submission.test_cases_total > 0 && (
+        <div className="text-xs mt-1">
+          <span className={`font-semibold ${submission.test_cases_passed === submission.test_cases_total ? 'text-green-600' : 'text-orange-600'}`}>
+            Test Cases: {submission.test_cases_passed} / {submission.test_cases_total} passed
+          </span>
+        </div>
+      )}
+
+      {/* Grader feedback */}
+      {submission.grader_feedback && (
+        <div className="mt-2 bg-blue-50 border border-blue-100 p-2 rounded text-xs text-blue-900">
+          <span className="font-semibold">Feedback: </span>{submission.grader_feedback}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CandidateProfile() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('overview')
+  // Tracks which session is expanded in the Tests tab (shows inline submissions)
+  const [expandedSessionId, setExpandedSessionId] = useState(null)
+  // Cache: sessionId → submissions array
+  const [sessionSubmissions, setSessionSubmissions] = useState({})
+  const [loadingSessionId, setLoadingSessionId] = useState(null)
+  // Manual grade modal
+  const [gradingModal, setGradingModal] = useState(null)
+  const [gradingData, setGradingData] = useState({ marks_obtained: 0, grader_feedback: '' })
+  // Approve / reject session modals
+  const [rejectModal, setRejectModal] = useState(null) // sessionId awaiting rejection
+  const [rejectReason, setRejectReason] = useState('')
 
   // Candidate details
   const { data: candidate, isLoading: loadingCandidate } = useQuery({
@@ -70,6 +195,64 @@ export default function CandidateProfile() {
     if (!scored.length) return null
     return Math.round(scored.reduce((sum, t) => sum + (t.session.percentage_score || 0), 0) / scored.length)
   })()
+
+  // Fetch submissions for a session and toggle inline expansion
+  const toggleSessionExpand = async (sessionId) => {
+    if (expandedSessionId === sessionId) {
+      setExpandedSessionId(null)
+      return
+    }
+    setExpandedSessionId(sessionId)
+    if (sessionSubmissions[sessionId]) return // already cached
+    setLoadingSessionId(sessionId)
+    try {
+      const res = await api.get(`/sessions/admin/session/${sessionId}/submissions`)
+      setSessionSubmissions(prev => ({ ...prev, [sessionId]: res.data || [] }))
+    } catch (err) {
+      toast.error('Failed to load submissions')
+      setExpandedSessionId(null)
+    } finally {
+      setLoadingSessionId(null)
+    }
+  }
+
+  const handleGradeSubmit = async (e) => {
+    e.preventDefault()
+    try {
+      await api.post(`/sessions/admin/submission/${gradingModal.id}/grade`, {
+        marks_obtained: parseFloat(gradingData.marks_obtained),
+        grader_feedback: gradingData.grader_feedback,
+      })
+      // Bust submissions cache for this session
+      setSessionSubmissions(prev => {
+        const updated = { ...prev }
+        delete updated[gradingModal.session_id]
+        return updated
+      })
+      setGradingModal(null)
+      if (expandedSessionId) {
+        const res = await api.get(`/sessions/admin/session/${expandedSessionId}/submissions`)
+        setSessionSubmissions(prev => ({ ...prev, [expandedSessionId]: res.data || [] }))
+      }
+      toast.success('Grading saved!')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to grade')
+    }
+  }
+
+  const handleReviewSession = async (sessionId, finalStatus, comments) => {
+    try {
+      await api.post(`/sessions/admin/session/${sessionId}/review`, {
+        final_status: finalStatus,
+        admin_comments: comments,
+      })
+      toast.success(finalStatus === 'approved' ? 'Submission approved.' : 'Submission rejected.')
+      // Invalidate test history cache so the status badges update without page reload
+      queryClient.invalidateQueries({ queryKey: ['candidate-tests', candidate?.email] })
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to review session')
+    }
+  }
 
   if (loadingCandidate) {
     return (
@@ -122,8 +305,8 @@ export default function CandidateProfile() {
                   {candidate.status}
                 </span>
               </div>
-              {candidate.position_applied && (
-                <p className="text-gray-500 text-sm mb-2">{candidate.position_applied}</p>
+              {(candidate.designation?.title || candidate.position_applied) && (
+                <p className="text-gray-500 text-sm mb-2">{candidate.designation?.title || candidate.position_applied}</p>
               )}
               <div className="flex flex-wrap gap-4 text-sm text-gray-600">
                 {candidate.email && (
@@ -369,88 +552,248 @@ export default function CandidateProfile() {
 
         {/* ══ Tests tab ══ */}
         {activeTab === 'tests' && (
-          <div className="card overflow-hidden">
+          <div className="space-y-4">
             {tests.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
+              <div className="card text-center py-12 text-gray-500">
                 <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
                 No test invitations for this candidate.
               </div>
             ) : (
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    {['Test', 'Invited', 'Status', 'Score', 'Time Taken', ''].map(h => (
-                      <th key={h} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {tests.map(({ invitation, test, session }) => {
-                    const statusLabel = session
-                      ? session.status
-                      : new Date(invitation.expires_at) < new Date()
-                        ? 'expired'
-                        : 'pending'
-                    const statusColor =
-                      session?.status === 'completed' ? 'bg-green-100 text-green-800'
-                        : session?.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800'
-                        : statusLabel === 'expired' ? 'bg-red-100 text-red-800'
-                        : 'bg-blue-100 text-blue-800'
+              tests.map(({ invitation, test, session }) => {
+                const statusLabel = session
+                  ? session.status
+                  : new Date(invitation.expires_at) < new Date()
+                    ? 'expired'
+                    : 'pending'
+                const statusColor =
+                  session?.status === 'completed' ? 'bg-green-100 text-green-800'
+                    : session?.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800'
+                    : statusLabel === 'expired' ? 'bg-red-100 text-red-800'
+                    : 'bg-blue-100 text-blue-800'
 
-                    const timeTaken = session?.started_at && session?.ended_at
-                      ? Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 60000)
-                      : null
+                const timeTaken = session?.started_at && session?.ended_at
+                  ? Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 60000)
+                  : null
 
-                    return (
-                      <tr key={invitation.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <div className="text-sm font-medium text-gray-900">{test?.title || 'Unknown Test'}</div>
-                          {test?.total_marks != null && (
-                            <div className="text-xs text-gray-500">{test.total_marks} marks · {test.duration_minutes} min</div>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">
-                          {new Date(invitation.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-0.5 text-xs rounded-full font-medium capitalize ${statusColor}`}>
+                const isExpanded = expandedSessionId === session?.id
+                const subs = sessionSubmissions[session?.id] || []
+
+                return (
+                  <div key={invitation.id} className="card overflow-hidden p-0">
+                    {/* Test row */}
+                    <div className="flex items-center gap-4 px-5 py-4 bg-white">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="font-semibold text-gray-900 text-sm">{test?.title || 'Unknown Test'}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${statusColor}`}>
                             {statusLabel}
                           </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm">
-                          {session?.total_marks_obtained != null ? (
-                            <span className="font-semibold text-gray-900">
-                              {session.total_marks_obtained}/{session.total_marks} ({session.percentage_score?.toFixed(1)}%)
-                            </span>
-                          ) : (
-                            <span className="text-gray-400">—</span>
+                          {session?.admin_reviewed && (
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              session.final_status === 'approved' ? 'bg-green-100 text-green-800'
+                                : session.final_status === 'rejected' ? 'bg-red-100 text-red-800'
+                                : 'bg-gray-100 text-gray-600'
+                            }`}>{session.final_status || 'reviewed'}</span>
                           )}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-500">
-                          {timeTaken != null ? `${timeTaken} min` : '—'}
-                        </td>
-                        <td className="px-6 py-4 text-right text-xs font-medium">
-                          {session?.id && (
-                            <Link
-                              to={`/dashboard/tests/${invitation.test_id}/sessions`}
-                              className="text-primary-600 hover:text-primary-800"
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-3">
+                          {test?.total_marks != null && (
+                            <span>{test.total_marks} marks · {test.duration_minutes} min</span>
+                          )}
+                          <span>Invited {new Date(invitation.created_at).toLocaleDateString()}</span>
+                          {timeTaken != null && <span>Time taken: {timeTaken} min</span>}
+                        </div>
+                      </div>
+
+                      {/* Score */}
+                      {session?.total_marks_obtained != null && (
+                        <div className="text-right shrink-0">
+                          <div className="text-lg font-bold text-primary-700">
+                            {session.total_marks_obtained}/{session.total_marks}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {session.percentage_score?.toFixed(1)}%
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                        {session?.id && (
+                          <>
+                            <button
+                              onClick={() => toggleSessionExpand(session.id)}
+                              className={`btn btn-sm ${isExpanded ? 'btn-primary' : 'btn-secondary'}`}
                             >
-                              View Submission →
+                              {loadingSessionId === session.id ? (
+                                <span className="flex items-center gap-1"><div className="spinner-small" />Loading…</span>
+                              ) : isExpanded ? 'Hide Submissions ▲' : 'View Submissions ▼'}
+                            </button>
+                            <Link
+                              to={`/dashboard/tests/${invitation.test_id}/sessions/${session.id}/violations`}
+                              className="text-xs text-orange-600 hover:text-orange-800 font-medium whitespace-nowrap"
+                            >
+                              Violations
                             </Link>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                            {/* Approve / Reject — only for completed, unreviewed sessions */}
+                            {session.is_completed && !session.admin_reviewed && (
+                              <>
+                                <button
+                                  onClick={() => handleReviewSession(session.id, 'approved', 'Approved from candidate profile')}
+                                  className="btn btn-sm text-xs bg-green-600 hover:bg-green-700 text-white border-0"
+                                >
+                                  ✓ Approve
+                                </button>
+                                <button
+                                  onClick={() => { setRejectModal(session.id); setRejectReason('') }}
+                                  className="btn btn-sm text-xs bg-red-50 hover:bg-red-100 text-red-700 border border-red-200"
+                                >
+                                  ✕ Reject
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Inline submissions panel */}
+                    {isExpanded && (
+                      <div className="border-t border-gray-200 bg-gray-50 px-5 py-4 space-y-4">
+                        {subs.length === 0 ? (
+                          <p className="text-sm text-gray-500 text-center py-4">No submissions found for this session.</p>
+                        ) : (
+                          subs.map(sub => (
+                            <div key={sub.id} className="relative">
+                              <SubmissionCard submission={sub} />
+                              {/* Manual grade button for any question type */}
+                              <button
+                                title="Grade / override marks"
+                                onClick={() => {
+                                  setGradingModal({ ...sub, session_id: session.id })
+                                  setGradingData({ marks_obtained: sub.marks_obtained || 0, grader_feedback: sub.grader_feedback || '' })
+                                }}
+                                className="absolute top-3 right-3 text-xs text-gray-400 hover:text-primary-600 flex items-center gap-1"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                                Grade
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
             )}
           </div>
         )}
 
       </div>
+
+      {/* ── Manual grade modal ──────────────────────────────────────────── */}
+      {gradingModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Grade Answer</h2>
+              <button onClick={() => setGradingModal(null)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="mb-4">
+                <p className="text-sm font-semibold text-gray-800 mb-1">
+                  {gradingModal.question?.title || gradingModal.question_type}
+                </p>
+                {gradingModal.code_answer && (
+                  <pre className="bg-gray-900 text-gray-100 p-3 rounded text-xs overflow-x-auto mb-3">{gradingModal.code_answer}</pre>
+                )}
+                {gradingModal.text_answer && (
+                  <div className="bg-gray-50 p-3 rounded text-sm text-gray-900 whitespace-pre-wrap mb-3">{gradingModal.text_answer}</div>
+                )}
+              </div>
+              <form onSubmit={handleGradeSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Marks Obtained (Max: {gradingModal.max_marks}) *
+                  </label>
+                  <input
+                    type="number"
+                    value={gradingData.marks_obtained}
+                    onChange={(e) => setGradingData({ ...gradingData, marks_obtained: e.target.value })}
+                    className="input"
+                    min="0"
+                    max={gradingModal.max_marks}
+                    step="0.5"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Feedback</label>
+                  <textarea
+                    value={gradingData.grader_feedback}
+                    onChange={(e) => setGradingData({ ...gradingData, grader_feedback: e.target.value })}
+                    className="input"
+                    rows={3}
+                    placeholder="Feedback for the candidate…"
+                  />
+                </div>
+                <div className="flex justify-end gap-3 pt-2">
+                  <button type="button" onClick={() => setGradingModal(null)} className="btn btn-secondary">Cancel</button>
+                  <button type="submit" className="btn btn-primary">Submit Grading</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Reject reason modal ──────────────────────────────────────────── */}
+      {rejectModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Reject Submission</h2>
+              <button onClick={() => setRejectModal(null)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Reason for rejection</label>
+                <textarea
+                  value={rejectReason}
+                  onChange={e => setRejectReason(e.target.value)}
+                  className="input"
+                  rows={3}
+                  placeholder="Enter reason…"
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setRejectModal(null)} className="btn btn-secondary">Cancel</button>
+                <button
+                  onClick={() => {
+                    handleReviewSession(rejectModal, 'rejected', rejectReason || 'Rejected by admin')
+                    setRejectModal(null)
+                  }}
+                  className="btn bg-red-600 hover:bg-red-700 text-white border-0"
+                >
+                  Confirm Reject
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }

@@ -1,13 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import DashboardLayout from '../components/layouts/DashboardLayout';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 
 export default function TestsManagement() {
   const { user } = useAuthStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchQ = searchParams.get('q') || '';
+  const statusQ = searchParams.get('status') || '';
+  const setSearchQ = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v ? n.set('q', v) : n.delete('q'); return n });
+  const setStatusQ = (v) => setSearchParams(prev => { const n = new URLSearchParams(prev); v ? n.set('status', v) : n.delete('status'); return n });
   const [tests, setTests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -110,6 +115,14 @@ export default function TestsManagement() {
     });
   };
 
+  const filteredTests = useMemo(() => {
+    return tests.filter(t => {
+      const matchQ = !searchQ || t.title?.toLowerCase().includes(searchQ.toLowerCase()) || t.description?.toLowerCase().includes(searchQ.toLowerCase())
+      const matchStatus = !statusQ || (statusQ === 'published' ? t.is_published : !t.is_published)
+      return matchQ && matchStatus
+    })
+  }, [tests, searchQ, statusQ])
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -141,8 +154,33 @@ export default function TestsManagement() {
         </button>
       </div>
 
+      {/* Search / Filter bar */}
+      <div className="flex flex-wrap gap-3 mb-6">
+        <div className="relative flex-1 min-w-52">
+          <svg className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search tests…"
+            value={searchQ}
+            onChange={e => setSearchQ(e.target.value)}
+            className="pl-9 pr-3 py-2 w-full border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          />
+        </div>
+        <select
+          value={statusQ}
+          onChange={e => setStatusQ(e.target.value)}
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-400"
+        >
+          <option value="">All Status</option>
+          <option value="published">Published</option>
+          <option value="draft">Draft</option>
+        </select>
+      </div>
+
       {/* Tests Grid */}
-      {tests.length === 0 ? (
+      {filteredTests.length === 0 ? (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <div className="text-5xl mb-4">📝</div>
           <h3 className="text-xl font-semibold text-gray-900 mb-2">No tests yet</h3>
@@ -156,7 +194,7 @@ export default function TestsManagement() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tests.map((test) => (
+          {filteredTests.map((test) => (
             <div key={test.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow">
               <div className="p-6">
                 {/* Status Badge */}

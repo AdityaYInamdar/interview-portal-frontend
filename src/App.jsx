@@ -27,6 +27,9 @@ import AdminGradingDashboard from './pages/AdminGradingDashboard'
 import CandidateProfile from './pages/CandidateProfile'
 import AdminViolations from './pages/AdminViolations'
 import TestOverview from './pages/TestOverview'
+import DesignationsManager from './pages/DesignationsManager'
+import EvaluationsHub from './pages/EvaluationsHub'
+import EvaluationDetail from './pages/EvaluationDetail'
 
 // Protected Route Component
 function ProtectedRoute({ children, allowedRoles = [] }) {
@@ -193,10 +196,27 @@ export default function App() {
       />
 
       <Route
+        path="/dashboard/settings/designations"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <DesignationsManager />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
         path="/dashboard/evaluations"
         element={
           <ProtectedRoute allowedRoles={['admin', 'interviewer']}>
-            <div className="min-h-screen flex items-center justify-center"><h1 className="text-2xl font-bold">Evaluations (Coming Soon)</h1></div>
+            <EvaluationsHub />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/dashboard/evaluations/:sessionId"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'interviewer']}>
+            <EvaluationDetail />
           </ProtectedRoute>
         }
       />

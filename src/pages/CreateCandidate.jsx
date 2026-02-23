@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -12,7 +12,7 @@ const candidateSchema = z.object({
   email: z.string().email('Invalid email address'),
   full_name: z.string().min(2, 'Full name must be at least 2 characters'),
   phone: z.string().optional(),
-  position_applied: z.string().min(2, 'Position is required'),
+  position_applied: z.string().min(1, 'Please select a position').optional(),
   resume_url: z.string().url('Invalid URL').optional().or(z.literal('')),
   linkedin_url: z.string().url('Invalid URL').optional().or(z.literal('')),
   github_url: z.string().url('Invalid URL').optional().or(z.literal('')),
@@ -33,6 +33,16 @@ export default function CreateCandidate() {
   const [skillInput, setSkillInput] = useState('')
   const [isParsing, setIsParsing] = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
+  const [designations, setDesignations] = useState([])
+  const [loadingDesignations, setLoadingDesignations] = useState(true)
+
+  // Load designation list on mount
+  useEffect(() => {
+    api.get('/designations/', { params: { active_only: true } })
+      .then(res => setDesignations(res.data || []))
+      .catch(() => setDesignations([]))
+      .finally(() => setLoadingDesignations(false))
+  }, [])
 
   const {
     register,
@@ -268,9 +278,28 @@ export default function CreateCandidate() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Position Applied <span className="text-red-500">*</span>
                   </label>
-                  <input type="text" {...register('position_applied')} className="input" placeholder="Senior Software Engineer" />
-                  {errors.position_applied && (
-                    <p className="text-red-500 text-sm mt-1">{errors.position_applied.message}</p>
+                  {loadingDesignations ? (
+                    <div className="input flex items-center text-gray-400 text-sm">Loading positions…</div>
+                  ) : designations.length === 0 ? (
+                    <div className="rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                      No designations found.{' '}
+                      <Link to="/dashboard/settings/designations" className="underline font-medium">Add designations</Link>
+                      {' '}before adding candidates.
+                    </div>
+                  ) : (
+                    <>
+                      <select {...register('position_applied')} className="input">
+                        <option value="">— Select a position —</option>
+                        {designations.map(d => (
+                          <option key={d.id} value={d.id}>
+                            {d.title}{d.department ? ` · ${d.department}` : ''}{d.level ? ` (${d.level})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {errors.position_applied && (
+                        <p className="text-red-500 text-sm mt-1">{errors.position_applied.message}</p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
