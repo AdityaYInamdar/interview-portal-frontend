@@ -32,8 +32,12 @@ const LANGUAGES = [
 function VideoTile({ stream, label, muted = false, badge = '', className = '' }) {
   const ref = useRef(null);
   useEffect(() => {
-    if (ref.current && stream && ref.current.srcObject !== stream) {
-      ref.current.srcObject = stream;
+    if (!ref.current) return;
+    if (stream) {
+      if (ref.current.srcObject !== stream) ref.current.srcObject = stream;
+    } else {
+      // Participant left — clear stale frame so we don't show a frozen image
+      ref.current.srcObject = null;
     }
   }, [stream]);
 
@@ -101,9 +105,13 @@ export default function InterviewRoom() {
   const [output, setOutput]         = useState('');
   const [outputType, setOutputType] = useState(''); // 'success' | 'error' | ''
 
-  // Whiteboard
+  // Whiteboard & code editor access
   const [wbCandidateCanEdit, setWbCandidateCanEdit] = useState(false);
+  const [codeEditorLocked, setCodeEditorLocked] = useState(false);
   const [executing, setExecuting]   = useState(false);
+
+  // Participants panel
+  const [showParticipants, setShowParticipants] = useState(false);
 
   // Media
   const [localStream, setLocalStream]   = useState(null);
@@ -423,6 +431,45 @@ export default function InterviewRoom() {
       }
     });
 
+    // Interviewer toggled code editor access
+    socket.on('code-editor-access', ({ canEdit }) => {
+      setCodeEditorLocked(!canEdit);
+      if (isCandidate) {
+        toast(canEdit ? '💻 You can now edit code' : '🔒 Code editor locked by interviewer', {
+          icon: canEdit ? '💻' : '🔒',
+        });
+      }
+    });
+
+    // Remote control events (commands from interviewer)
+    socket.on('force-muted', () => {
+      const track = localStreamRef.current?.getAudioTracks()[0];
+      if (track) { track.enabled = false; setAudioEnabled(false); }
+      toast('🔇 You were muted by the interviewer', { icon: '🔇' });
+    });
+
+    socket.on('force-video-off', () => {
+      const track = localStreamRef.current?.getVideoTracks()[0];
+      if (track) { track.enabled = false; setVideoEnabled(false); }
+      toast('📷 Camera turned off by interviewer', { icon: '📷' });
+    });
+
+    socket.on('force-stop-screenshare', () => {
+      screenStream?.getTracks().forEach(t => t.stop());
+      setScreenStream(null);
+      setScreenSharing(false);
+      toast('🖥 Screen sharing stopped by interviewer', { icon: '🖥' });
+    });
+
+    // Kicked from the interview
+    socket.on('kicked', ({ reason } = {}) => {
+      toast.error(`You were removed: ${reason || 'Removed by interviewer'}`);
+      setTimeout(() => {
+        sessionStorage.removeItem('guest-token');
+        navigate(user ? '/dashboard' : '/');
+      }, 2000);
+    });
+
     // ── WebRTC signalling ─────────────────────────────────────────────────────
     socket.on('webrtc-offer', async ({ from, offer }) => {
       console.log('Received offer from', from);
@@ -599,6 +646,43 @@ export default function InterviewRoom() {
     if (t) { t.enabled = !t.enabled; setVideoEnabled(t.enabled); }
   };
 
+  // ─── Interviewer room controls ──────────────────────────────────────────────
+  const handleCodeAccessToggle = useCallback(() => {
+    const next = !codeEditorLocked;
+    setCodeEditorLocked(next);
+    socketRef.current?.emit('code-editor-access', {
+      interviewId: id, canEdit: !next, userId: effectiveUser?.id,
+    });
+    toast.success(next ? '🔒 Code editor locked for candidate' : '💻 Code editor unlocked');
+  }, [id, effectiveUser, codeEditorLocked]);
+
+  const kickParticipant = useCallback((targetUserId) => {
+    socketRef.current?.emit('kick-participant', {
+      interviewId: id, targetUserId, userId: effectiveUser?.id,
+    });
+  }, [id, effectiveUser]);
+
+  const forceMuteParticipant = useCallback((targetUserId) => {
+    socketRef.current?.emit('force-mute', {
+      interviewId: id, targetUserId, userId: effectiveUser?.id,
+    });
+    toast.success('Mute request sent');
+  }, [id, effectiveUser]);
+
+  const forceVideoOffParticipant = useCallback((targetUserId) => {
+    socketRef.current?.emit('force-video-off', {
+      interviewId: id, targetUserId, userId: effectiveUser?.id,
+    });
+    toast.success('Camera off request sent');
+  }, [id, effectiveUser]);
+
+  const forceStopScreenShareParticipant = useCallback((targetUserId) => {
+    socketRef.current?.emit('force-stop-screenshare', {
+      interviewId: id, targetUserId, userId: effectiveUser?.id,
+    });
+    toast.success('Stop screen share request sent');
+  }, [id, effectiveUser]);
+
   const endInterview = () => {
     if (isInterviewer) {
       setEndConfirm(true);
@@ -612,6 +696,12 @@ export default function InterviewRoom() {
       navigate('/dashboard');
     }
   };
+
+  // ─── All participants (self + remotes) for the participants panel ───────────────
+  const allParticipants = [
+    { userId: effectiveUser?.id, userName: effectiveUser?.full_name || 'You', userRole: effectiveUser?.role, isSelf: true },
+    ...participants,
+  ];
 
   // ─── Helpers – pick remote peers by role ──────────────────────────────────────
   const remoteList = Object.entries(remoteStreams).map(([uid, stream]) => ({
@@ -875,9 +965,12 @@ export default function InterviewRoom() {
             <span className="text-sm font-semibold truncate max-w-[220px]">{interview?.position}</span>
           </span>
 
-          <span className="text-xs border border-gray-700 rounded px-2 py-0.5 text-gray-400">
-            {participants.length + 1} participant{participants.length + 1 !== 1 ? 's' : ''}
-          </span>
+          <button
+            onClick={() => setShowParticipants(v => !v)}
+            className={`text-xs border rounded px-2 py-0.5 transition-colors ${showParticipants ? 'border-indigo-500 text-indigo-300 bg-indigo-900/30' : 'border-gray-700 text-gray-400 hover:text-white hover:border-gray-500'}`}
+          >
+            👥 {allParticipants.length} participant{allParticipants.length !== 1 ? 's' : ''}
+          </button>
 
           {isInterviewer && (
             <span className="text-xs bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 rounded px-2 py-0.5">
@@ -1169,6 +1262,7 @@ export default function InterviewRoom() {
                     bracketPairColorization: { enabled: true },
                     cursorBlinking: 'smooth',
                     renderWhitespace: 'selection',
+                    readOnly: isCandidate && codeEditorLocked,
                   }}
                   onMount={e => { editorRef.current = e; }}
                 />
@@ -1290,6 +1384,97 @@ export default function InterviewRoom() {
         }}
         onCancel={() => setEndConfirm(false)}
       />
+    )}
+
+    {/* ── Participants panel ─────────────────────────────────────────────── */}
+    {showParticipants && (
+      <div className="fixed inset-y-0 right-0 w-80 bg-gray-900 border-l border-gray-800 shadow-2xl z-50 flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-semibold text-white">Participants ({allParticipants.length})</h2>
+          <button onClick={() => setShowParticipants(false)} className="text-gray-400 hover:text-white p-1 rounded">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        {/* Room controls — interviewer only */}
+        {isInterviewer && (
+          <div className="px-4 py-3 border-b border-gray-800 space-y-2">
+            <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Room Controls</p>
+            <button
+              onClick={handleWbAccessToggle}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                wbCandidateCanEdit ? 'bg-amber-900/40 text-amber-300 hover:bg-amber-900/60' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              <span>{wbCandidateCanEdit ? '🔒' : '✏️'}</span>
+              Whiteboard: {wbCandidateCanEdit ? 'Candidate can draw — click to lock' : 'View-only for candidate — click to unlock'}
+            </button>
+            <button
+              onClick={handleCodeAccessToggle}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                codeEditorLocked ? 'bg-amber-900/40 text-amber-300 hover:bg-amber-900/60' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              <span>{codeEditorLocked ? '💻' : '🔒'}</span>
+              Code Editor: {codeEditorLocked ? 'Locked — click to unlock' : 'Editable — click to lock'}
+            </button>
+          </div>
+        )}
+
+        {/* Participant list */}
+        <ul className="flex-1 overflow-y-auto p-3 space-y-1.5">
+          {allParticipants.map(p => (
+            <li key={p.userId} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-gray-800/60">
+              <div className="w-8 h-8 shrink-0 rounded-full bg-indigo-700 flex items-center justify-center text-sm font-bold text-white">
+                {p.userName?.[0]?.toUpperCase() || '?'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white truncate">
+                  {p.userName}
+                  {p.isSelf && <span className="ml-1 text-xs text-gray-500">(You)</span>}
+                </p>
+                <p className="text-xs text-gray-400 capitalize">{p.userRole}</p>
+              </div>
+              {/* Action buttons — only shown to interviewer for non-self participants */}
+              {isInterviewer && !p.isSelf && (
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button
+                    onClick={() => forceMuteParticipant(p.userId)}
+                    title="Mute microphone"
+                    className="p-1.5 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors"
+                  >
+                    <IconMicOff />
+                  </button>
+                  <button
+                    onClick={() => forceVideoOffParticipant(p.userId)}
+                    title="Turn off camera"
+                    className="p-1.5 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors"
+                  >
+                    <IconCamOff />
+                  </button>
+                  <button
+                    onClick={() => forceStopScreenShareParticipant(p.userId)}
+                    title="Stop screen share"
+                    className="p-1.5 hover:bg-gray-700 rounded-lg text-gray-400 hover:text-white transition-colors"
+                  >
+                    <IconScreen />
+                  </button>
+                  <button
+                    onClick={() => kickParticipant(p.userId)}
+                    title="Remove from room"
+                    className="p-1.5 hover:bg-red-800 rounded-lg text-gray-400 hover:text-red-300 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
     )}
   </>
   );
