@@ -299,7 +299,7 @@ export default function InterviewRoom() {
     const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
     const socket = io(SOCKET_URL, {
       path: '/socket.io',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
     });
     socketRef.current = socket;
 

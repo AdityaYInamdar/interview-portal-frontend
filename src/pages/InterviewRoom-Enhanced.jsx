@@ -88,9 +88,10 @@ export default function InterviewRoom() {
   useEffect(() => {
     if (!interview || !user) return;
     
-    const socket = io('http://localhost:8000', {
+    const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const socket = io(SOCKET_URL, {
       path: '/socket.io',
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       query: {
         user_id: user.id,
         user_name: user.full_name,

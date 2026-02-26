@@ -1,6 +1,8 @@
 import { io } from 'socket.io-client'
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'http://localhost:8000'
+// Use VITE_API_URL (same var as the REST API) so there's one source of truth.
+// Socket.IO automatically uses wss:// when the base URL is https://.
+const WS_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 class SocketService {
   constructor() {
@@ -19,7 +21,7 @@ class SocketService {
         userId,
         userName,
       },
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
     })
 
     this.socket.on('connect', () => {
