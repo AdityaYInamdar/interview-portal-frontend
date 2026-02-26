@@ -42,31 +42,49 @@ function InfoCard({ label, value, sub }) {
 
 function TestCaseResult({ tc, idx }) {
   const passed = tc.passed || tc.status === 'passed'
+  const showDetails = tc.input !== '[Hidden]' && tc.expected !== '[Hidden]'
   return (
     <div className={`rounded-lg border p-3 text-xs ${passed ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}`}>
       <div className="flex items-center justify-between mb-2">
-        <span className="font-semibold text-gray-700">Case #{idx + 1}</span>
-        <span className={`px-2 py-0.5 rounded-full font-medium ${passed ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>
-          {passed ? 'Passed' : 'Failed'}
-        </span>
+        <span className="font-semibold text-gray-700">Case #{(tc.test_case ?? idx + 1)}</span>
+        <div className="flex items-center gap-2">
+          {tc.max_marks != null && (
+            <span className="text-gray-500 font-mono">{tc.marks ?? 0}/{tc.max_marks}</span>
+          )}
+          <span className={`px-2 py-0.5 rounded-full font-medium ${passed ? 'bg-green-200 text-green-800' : 'bg-red-200 text-red-800'}`}>
+            {passed ? 'Passed' : 'Failed'}
+          </span>
+        </div>
       </div>
-      {tc.input !== undefined && (
-        <div className="mb-1">
-          <span className="text-gray-500 font-medium">Input: </span>
-          <code className="text-gray-800 font-mono">{String(tc.input)}</code>
-        </div>
-      )}
-      {tc.expected !== undefined && (
-        <div className="mb-1">
-          <span className="text-gray-500 font-medium">Expected: </span>
-          <code className="text-gray-800 font-mono">{String(tc.expected)}</code>
-        </div>
-      )}
-      {tc.actual !== undefined && !passed && (
-        <div>
-          <span className="text-gray-500 font-medium">Got: </span>
-          <code className="text-red-800 font-mono">{String(tc.actual)}</code>
-        </div>
+      {showDetails ? (
+        <>
+          {tc.input !== undefined && (
+            <div className="mb-1">
+              <span className="text-gray-500 font-medium">Input: </span>
+              <code className="text-gray-800 font-mono break-all">{String(tc.input)}</code>
+            </div>
+          )}
+          {tc.expected !== undefined && (
+            <div className="mb-1">
+              <span className="text-gray-500 font-medium">Expected: </span>
+              <code className="text-gray-800 font-mono break-all">{String(tc.expected)}</code>
+            </div>
+          )}
+          {tc.actual !== undefined && !passed && (
+            <div>
+              <span className="text-gray-500 font-medium">Got: </span>
+              <code className="text-red-800 font-mono break-all">{String(tc.actual)}</code>
+            </div>
+          )}
+          {(tc.error) && (
+            <div className="mt-1">
+              <span className="text-gray-500 font-medium">Error: </span>
+              <code className="text-red-700 font-mono break-all whitespace-pre-wrap">{tc.error}</code>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="text-gray-400 italic">{passed ? 'Hidden test case — passed ✓' : 'Hidden test case — failed ✗'}</p>
       )}
     </div>
   )
@@ -86,7 +104,7 @@ function QuestionCard({ sub, idx, timeMs, sessionId }) {
   const obtained = sub.marks_obtained ?? null
   const pct = maxMarks > 0 && obtained != null ? Math.round((obtained / maxMarks) * 100) : null
 
-  const testCases = sub.test_results || sub.test_cases_raw || []
+  const testCases = sub.test_results || sub.grading_details?.test_results || sub.test_cases_raw || []
   const tcPassed = sub.test_cases_passed || 0
   const tcTotal  = sub.test_cases_total || 0
 
@@ -108,7 +126,14 @@ function QuestionCard({ sub, idx, timeMs, sessionId }) {
           {idx + 1}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-medium text-gray-900 truncate">{q.title || q.question_text?.slice(0, 60) || `Question ${idx + 1}`}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-medium text-gray-900 truncate">{q.title || q.question_text?.slice(0, 60) || `Question ${idx + 1}`}</p>
+            {sub.paste_detected && (
+              <span className="shrink-0 text-xs font-semibold px-2 py-0.5 bg-red-100 text-red-700 rounded-full border border-red-200">
+                ⚠ Paste Detected
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-3 mt-0.5 flex-wrap">
             <span className="text-xs text-gray-400 capitalize">{qType}</span>
             {timeLabel && <span className="text-xs text-gray-400">⏱ {timeLabel}</span>}
@@ -153,24 +178,39 @@ function QuestionCard({ sub, idx, timeMs, sessionId }) {
           {isMCQ && (
             <div>
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Answer</p>
-              <div className="space-y-1">
-                {(q.options || []).map((opt, i) => {
-                  const selected = sub.text_answer === opt || sub.text_answer === String(i)
-                  const correct  = q.correct_answer === opt || q.correct_answer === String(i)
-                  return (
-                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm border ${
-                      correct ? 'bg-green-50 border-green-200 text-green-800' :
-                      selected && !correct ? 'bg-red-50 border-red-200 text-red-800' :
-                      'border-gray-100 text-gray-700'
-                    }`}>
-                      {correct && <span className="text-green-600">✓</span>}
-                      {selected && !correct && <span className="text-red-500">✗</span>}
-                      {!correct && !selected && <span className="w-4" />}
-                      {opt}
-                    </div>
-                  )
-                })}
-              </div>
+              {(!q.mcq_options || q.mcq_options.length === 0) ? (
+                <div className="text-xs text-gray-500 italic">
+                  MCQ options not available.
+                  {sub.mcq_selected_options?.length > 0 && (
+                    <span> Candidate selected option IDs: {sub.mcq_selected_options.join(', ')}</span>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {q.mcq_options.map((opt) => {
+                    const selected = (sub.mcq_selected_options || []).includes(opt.id)
+                    const correct  = !!opt.is_correct
+                    return (
+                      <div key={opt.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm border ${
+                        correct && selected ? 'bg-green-50 border-green-300 text-green-900' :
+                        correct            ? 'bg-green-50 border-green-200 text-green-800' :
+                        selected           ? 'bg-red-50 border-red-200 text-red-800' :
+                        'border-gray-100 text-gray-700'
+                      }`}>
+                        <span className="w-4 shrink-0 text-center">
+                          {correct ? <span className="text-green-600 font-bold">✓</span>
+                            : selected ? <span className="text-red-500 font-bold">✗</span>
+                            : null}
+                        </span>
+                        <span className="flex-1">{opt.text}</span>
+                        {selected && correct  && <span className="text-xs text-green-700 font-semibold ml-auto whitespace-nowrap">Selected ✓</span>}
+                        {selected && !correct && <span className="text-xs text-red-700 font-semibold ml-auto whitespace-nowrap">Selected ✗</span>}
+                        {!selected && correct  && <span className="text-xs text-green-600 font-medium ml-auto whitespace-nowrap">Correct answer</span>}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 
