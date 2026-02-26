@@ -78,7 +78,11 @@ export default function CreateInterview() {
       queryClient.invalidateQueries({ queryKey: ['interviews'] })
       navigate('/dashboard/interviews')
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to schedule interview')
+      const detail = error.response?.data?.detail
+      const message = Array.isArray(detail)
+        ? detail.map(e => e.msg).join(', ')
+        : (typeof detail === 'string' ? detail : 'Failed to schedule interview')
+      toast.error(message)
     } finally {
       setIsSubmitting(false)
     }
