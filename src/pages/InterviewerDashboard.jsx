@@ -16,7 +16,7 @@ export default function InterviewerDashboard() {
   const { data: stats } = useQuery({
     queryKey: ['interviewer-stats'],
     queryFn: async () => {
-      const res = await api.get('/interviews?page_size=200')
+      const res = await api.get('/interviews?page_size=100')
       const interviews = res.data.items || res.data || []
 
       const today = new Date().toDateString()

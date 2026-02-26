@@ -44,7 +44,7 @@ export default function InterviewList() {
       const params = new URLSearchParams()
       if (filters.status) params.append('status', filters.status)
       if (filters.interview_type) params.append('interview_type', filters.interview_type)
-      params.append('page_size', '200')
+      params.append('page_size', '100')
       
       const response = await api.get(`/interviews?${params}`)
       return response.data.items || response.data
