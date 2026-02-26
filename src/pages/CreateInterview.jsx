@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
@@ -11,7 +11,7 @@ import { useAuthStore } from '../store/authStore'
 
 const interviewSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters').max(200, 'Title too long'),
-  position: z.string().min(2, 'Position must be at least 2 characters').max(100, 'Position too long'),
+  designation_id: z.string().min(1, 'Please select a position'),
   candidate_id: z.string().uuid('Please select a candidate'),
   interviewer_id: z.string().uuid('Please select an interviewer'),
   interview_type: z.enum(['phone_screen', 'technical', 'system_design', 'behavioral', 'hr', 'final', 'mixed']),
@@ -25,6 +25,15 @@ export default function CreateInterview() {
   const { user } = useAuthStore()
   const queryClient = useQueryClient()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [designations, setDesignations] = useState([])
+  const [loadingDesignations, setLoadingDesignations] = useState(true)
+
+  useEffect(() => {
+    api.get('/designations/', { params: { active_only: true } })
+      .then(res => setDesignations(res.data || []))
+      .catch(() => setDesignations([]))
+      .finally(() => setLoadingDesignations(false))
+  }, [])
 
   const { data: candidates } = useQuery({
     queryKey: ['candidates'],
@@ -116,14 +125,20 @@ export default function CreateInterview() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Position <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              {...register('position')}
+            <select
+              {...register('designation_id')}
               className="input"
-              placeholder="e.g., Senior Frontend Developer"
-            />
-            {errors.position && (
-              <p className="text-red-500 text-sm mt-1">{errors.position.message}</p>
+              disabled={loadingDesignations}
+            >
+              <option value="">{loadingDesignations ? 'Loading positions...' : 'Select a position'}</option>
+              {designations.map(d => (
+                <option key={d.id} value={d.id}>
+                  {d.title}{d.department ? ` — ${d.department}` : ''}{d.level ? ` (${d.level})` : ''}
+                </option>
+              ))}
+            </select>
+            {errors.designation_id && (
+              <p className="text-red-500 text-sm mt-1">{errors.designation_id.message}</p>
             )}
           </div>
 
