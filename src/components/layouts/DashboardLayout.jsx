@@ -6,6 +6,7 @@ import api from '../../services/api'
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [evalPending, setEvalPending] = useState(0)
+  const [subAdminPerms, setSubAdminPerms] = useState(null) // null = not loaded yet
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
@@ -17,6 +18,14 @@ export default function DashboardLayout({ children }) {
       .catch(() => {})
   }, [user?.role])
 
+  // Fetch permissions for sub_admin so we can hide inaccessible nav items
+  useEffect(() => {
+    if (user?.role !== 'sub_admin') return
+    api.get('/user-management/me/permissions')
+      .then(res => setSubAdminPerms(res.data?.permissions || {}))
+      .catch(() => setSubAdminPerms({}))
+  }, [user?.role])
+
   const handleLogout = async () => {
     await logout()
     navigate('/login')
@@ -24,16 +33,17 @@ export default function DashboardLayout({ children }) {
 
   const navigation = {
     admin: [
-      { name: 'Dashboard', href: '/dashboard', icon: 'home' },
-      { name: 'Interviews', href: '/dashboard/interviews', icon: 'calendar' },
-      { name: 'Tests', href: '/dashboard/tests', icon: 'document-text' },
-      { name: 'Questions', href: '/dashboard/questions', icon: 'question-mark' },
-      { name: 'Candidates', href: '/dashboard/candidates', icon: 'users' },
-      { name: 'Designations', href: '/dashboard/settings/designations', icon: 'tag' },
-      { name: 'Interviewers', href: '/dashboard/interviewers', icon: 'user-group' },
-      { name: 'Evaluations', href: '/dashboard/evaluations', icon: 'clipboard-check' },
-      { name: 'Analytics', href: '/dashboard/analytics', icon: 'chart-bar' },
-      { name: 'Settings', href: '/dashboard/settings', icon: 'cog' },
+      { name: 'Dashboard',        href: '/dashboard',                      icon: 'home',          permKey: null },
+      { name: 'Interviews',       href: '/dashboard/interviews',           icon: 'calendar',      permKey: 'interviews' },
+      { name: 'Tests',            href: '/dashboard/tests',                icon: 'document-text', permKey: 'tests' },
+      { name: 'Questions',        href: '/dashboard/questions',            icon: 'question-mark', permKey: 'questions' },
+      { name: 'Candidates',       href: '/dashboard/candidates',           icon: 'users',         permKey: 'candidates' },
+      { name: 'Designations',     href: '/dashboard/settings/designations',icon: 'tag',           permKey: null },
+      { name: 'Interviewers',     href: '/dashboard/interviewers',         icon: 'user-group',    permKey: 'interviewers' },
+      { name: 'Evaluations',      href: '/dashboard/evaluations',          icon: 'clipboard-check',permKey: 'evaluations' },
+      { name: 'Analytics',        href: '/dashboard/analytics',            icon: 'chart-bar',     permKey: 'analytics' },
+      { name: 'User Management',  href: '/dashboard/users',                icon: 'users-cog',     permKey: 'users' },
+      { name: 'Settings',         href: '/dashboard/settings',             icon: 'cog',           permKey: 'settings' },
     ],
     interviewer: [
       { name: 'Dashboard', href: '/dashboard', icon: 'home' },
@@ -90,11 +100,30 @@ export default function DashboardLayout({ children }) {
       tag: (
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
       ),
+      'users-cog': (
+        <>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+        </>
+      ),
     }
     return icons[iconName] || icons.home
   }
 
-  const currentNav = navigation[user?.role] || navigation.candidate
+  // For sub_admin: filter nav based on fetched permissions.
+  // Admins see everything; other roles use their own nav unchanged.
+  let currentNav = navigation[user?.role] || navigation.candidate
+  if (user?.role === 'sub_admin') {
+    // Use admin navigation but hide items the sub_admin can't access (waiting until perms are loaded)
+    if (subAdminPerms !== null) {
+      currentNav = (navigation.admin || []).filter(item => {
+        if (!item.permKey) return true // always-visible items (Dashboard, Designations)
+        // menu_permissions is a flat dict: { "interviews": true, "tests": false, ... }
+        return !!(subAdminPerms.menu_permissions || {})[item.permKey]
+      })
+    } else {
+      currentNav = [] // loading state — avoid flicker
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">

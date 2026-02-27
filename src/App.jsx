@@ -30,6 +30,9 @@ import TestOverview from './pages/TestOverview'
 import DesignationsManager from './pages/DesignationsManager'
 import EvaluationsHub from './pages/EvaluationsHub'
 import EvaluationDetail from './pages/EvaluationDetail'
+import UserManagement from './pages/UserManagement'
+import PublicTestRegister from './pages/PublicTestRegister'
+import TestAnalytics from './pages/TestAnalytics'
 
 // Protected Route Component
 function ProtectedRoute({ children, allowedRoles = [] }) {
@@ -50,7 +53,7 @@ function ProtectedRoute({ children, allowedRoles = [] }) {
 function DashboardRouter() {
   const { user } = useAuthStore()
 
-  if (user?.role === 'admin') {
+  if (user?.role === 'admin' || user?.role === 'sub_admin') {
     return <AdminDashboard />
   } else if (user?.role === 'interviewer') {
     return <InterviewerDashboard />
@@ -279,6 +282,28 @@ export default function App() {
       {/* Public Test Routes (no authentication required) */}
       <Route path="/test/start" element={<CandidateTestInterface />} />
       <Route path="/test/complete" element={<TestComplete />} />
+      {/* Public self-registration page for mass hiring */}
+      <Route path="/test/:slug" element={<PublicTestRegister />} />
+
+      {/* User Management (admin only) */}
+      <Route
+        path="/dashboard/users"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <UserManagement />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Per-test analytics (admin + sub_admin) */}
+      <Route
+        path="/dashboard/tests/:id/analytics"
+        element={
+          <ProtectedRoute allowedRoles={['admin', 'sub_admin']}>
+            <TestAnalytics />
+          </ProtectedRoute>
+        }
+      />
 
       {/* 404 */}
       <Route path="*" element={<div className="min-h-screen flex items-center justify-center"><h1 className="text-4xl font-bold text-gray-900">404 - Not Found</h1></div>} />
